@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
+use tracing::info;
 
 #[derive(Deserialize, Debug, Serialize)]
 pub struct GoogleOAuthTokens {
@@ -108,5 +109,6 @@ pub async fn get_google_oauth_token_details_by_id_token(
 pub async fn perform_google_oauth(code: &String) -> Result<GoogleUserDetails, GoogleOAuthError> {
     let tokens = get_google_oauth_tokens_by_code(code).await?;
     let details = get_google_oauth_token_details_by_id_token(&tokens.id_token).await?;
+    info!("Event=GoogleUserAuthenticated name='{}'", details.name);
     Ok(details)
 }
