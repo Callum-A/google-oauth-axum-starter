@@ -1,7 +1,8 @@
 pub mod models;
 pub mod oauth;
 
-use crate::oauth::google::{perform_google_oauth, GoogleUserDetails};
+use crate::models::user::User;
+use crate::oauth::google::perform_google_oauth;
 use axum::{extract::Query, routing::get, Json, Router};
 use dotenv::dotenv;
 use serde::Deserialize;
@@ -25,7 +26,9 @@ struct GoogleOAuth {
     code: String,
 }
 
-async fn google_oauth(oauth: Query<GoogleOAuth>) -> Json<GoogleUserDetails> {
+async fn google_oauth(oauth: Query<GoogleOAuth>) -> Json<User> {
     let details = perform_google_oauth(&oauth.code).await.unwrap();
-    Json(details)
+    let user = User::from(details);
+    tracing::info!("Event=CreatedUser user={:?}", user);
+    Json(user)
 }

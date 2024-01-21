@@ -1,3 +1,4 @@
+use crate::oauth::google::GoogleUserDetails;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -14,6 +15,16 @@ impl User {
             id: Uuid::new_v4(),
             email,
             name,
+        }
+    }
+}
+
+impl From<GoogleUserDetails> for User {
+    fn from(details: GoogleUserDetails) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            email: details.email,
+            name: details.name,
         }
     }
 }
