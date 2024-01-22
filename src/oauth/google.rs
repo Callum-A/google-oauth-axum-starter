@@ -1,7 +1,9 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::fmt;
 use tracing::info;
+
+const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
+const TOKEN_INFO_URL: &str = "https://oauth2.googleapis.com/tokeninfo";
 
 #[derive(Deserialize, Debug, Serialize)]
 pub struct GoogleOAuthTokens {
@@ -53,62 +55,106 @@ impl fmt::Display for GoogleOAuthError {
     }
 }
 
+#[derive(Clone)]
+pub struct GoogleOAuthClient {
+    pub client_id: String,
+    pub client_secret: String,
+    pub redirect_uri: String,
+    pub client: reqwest::Client,
+}
+
+#[derive(Serialize)]
+pub struct TokenRequestPayload {
+    code: String,
+    client_id: String,
+    client_secret: String,
+    redirect_uri: String,
+    grant_type: String,
+    access_type: String,
+}
+
 fn safe_get_google_oauth_env_var(name: &str) -> Result<String, GoogleOAuthError> {
     std::env::var(name).map_err(|_e| GoogleOAuthError::MissingEnvironmentVariable {
         name: name.to_string(),
     })
 }
 
-pub async fn get_google_oauth_tokens_by_code(
-    code: &String,
-) -> Result<GoogleOAuthTokens, GoogleOAuthError> {
-    let url = "https://oauth2.googleapis.com/token";
-    let mut params: HashMap<&str, &str> = HashMap::new();
-    params.insert("code", code);
+impl GoogleOAuthClient {
+    pub fn from_env() -> Result<GoogleOAuthClient, GoogleOAuthError> {
+        let client_id = safe_get_google_oauth_env_var("GOOGLE_CLIENT_ID")?;
+        let client_secret = safe_get_google_oauth_env_var("GOOGLE_CLIENT_SECRET")?;
+        let redirect_uri = safe_get_google_oauth_env_var("GOOGLE_REDIRECT_URI")?;
+        Ok(GoogleOAuthClient {
+            client_id,
+            client_secret,
+            redirect_uri,
+            client: reqwest::Client::new(),
+        })
+    }
 
-    let client_id = safe_get_google_oauth_env_var("GOOGLE_CLIENT_ID")?;
-    params.insert("client_id", &client_id);
-    let client_secret = safe_get_google_oauth_env_var("GOOGLE_CLIENT_SECRET")?;
-    params.insert("client_secret", &client_secret);
-    let redirect_uri = safe_get_google_oauth_env_var("GOOGLE_REDIRECT_URI")?;
-    params.insert("redirect_uri", &redirect_uri);
-    params.insert("grant_type", "authorization_code");
-    params.insert("access_type", "offline");
-    let client = reqwest::Client::new();
-    let resp = client
-        .post(url)
-        .form(&params)
-        .send()
-        .await
-        .map_err(|_e| GoogleOAuthError::RestRequestFailed)?
-        .json::<GoogleOAuthTokens>()
-        .await
-        .map_err(|_e| GoogleOAuthError::DeserializeFailed)?;
-    Ok(resp)
-}
+    pub fn new(
+        client_id: String,
+        client_secret: String,
+        redirect_uri: String,
+    ) -> GoogleOAuthClient {
+        GoogleOAuthClient {
+            client_id,
+            client_secret,
+            redirect_uri,
+            client: reqwest::Client::new(),
+        }
+    }
 
-pub async fn get_google_oauth_token_details_by_id_token(
-    id_token: &String,
-) -> Result<GoogleUserDetails, GoogleOAuthError> {
-    let url = format!(
-        "https://oauth2.googleapis.com/tokeninfo?id_token={}",
-        id_token
-    );
-    let client = reqwest::Client::new();
-    let resp = client
-        .get(&url)
-        .send()
-        .await
-        .map_err(|_e| GoogleOAuthError::RestRequestFailed)?
-        .json::<GoogleUserDetails>()
-        .await
-        .map_err(|_e| GoogleOAuthError::DeserializeFailed)?;
-    Ok(resp)
-}
+    pub async fn get_google_oauth_tokens_by_code(
+        &self,
+        code: &str,
+    ) -> Result<GoogleOAuthTokens, GoogleOAuthError> {
+        let resp = self
+            .client
+            .post(TOKEN_URL)
+            .form(&TokenRequestPayload {
+                code: code.to_string(),
+                client_id: self.client_id.clone(),
+                client_secret: self.client_secret.clone(),
+                redirect_uri: self.redirect_uri.clone(),
+                grant_type: "authorization_code".to_string(),
+                access_type: "offline".to_string(),
+            })
+            .send()
+            .await
+            .map_err(|_e| GoogleOAuthError::RestRequestFailed)?
+            .json::<GoogleOAuthTokens>()
+            .await
+            .map_err(|_e| GoogleOAuthError::DeserializeFailed)?;
+        Ok(resp)
+    }
 
-pub async fn perform_google_oauth(code: &String) -> Result<GoogleUserDetails, GoogleOAuthError> {
-    let tokens = get_google_oauth_tokens_by_code(code).await?;
-    let details = get_google_oauth_token_details_by_id_token(&tokens.id_token).await?;
-    info!("Event=GoogleUserAuthenticated name='{}'", details.name);
-    Ok(details)
+    pub async fn get_google_oauth_token_details_by_id_token(
+        &self,
+        id_token: &str,
+    ) -> Result<GoogleUserDetails, GoogleOAuthError> {
+        let url = format!("{}?id_token={}", TOKEN_INFO_URL, id_token);
+        let resp = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|_e| GoogleOAuthError::RestRequestFailed)?
+            .json::<GoogleUserDetails>()
+            .await
+            .map_err(|_e| GoogleOAuthError::DeserializeFailed)?;
+        Ok(resp)
+    }
+
+    pub async fn perform_google_oauth(
+        &self,
+        code: &str,
+    ) -> Result<GoogleUserDetails, GoogleOAuthError> {
+        let tokens = self.get_google_oauth_tokens_by_code(code).await?;
+        let details = self
+            .get_google_oauth_token_details_by_id_token(&tokens.id_token)
+            .await?;
+        info!("Event=GoogleUserAuthenticated name='{}'", details.name);
+        Ok(details)
+    }
 }
