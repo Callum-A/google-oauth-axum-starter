@@ -63,9 +63,7 @@ async fn main() {
         .merge(protected_routes);
 
     // Start Server
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:5000")
-        .await
-        .unwrap();
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:5000").await.unwrap();
     tracing::info!(
         "Event=ServerStart local_addr={:?}",
         listener.local_addr().unwrap()
