@@ -4,15 +4,10 @@ pub mod repositories;
 pub mod routers;
 pub mod state;
 
-use crate::{models::user::User, oauth::google::GoogleOAuthClient, state::app::AppState};
-use axum::{
-    extract::{Query, State},
-    routing::get,
-    Json, Router,
-};
+use crate::{oauth::google::GoogleOAuthClient, state::app::AppState};
+use axum::{routing::get, Router};
 use dotenv::dotenv;
 use repositories::user::UserRepository;
-use serde::Deserialize;
 use sqlx::postgres::PgPoolOptions;
 use tracing_subscriber::layer::SubscriberExt;
 
