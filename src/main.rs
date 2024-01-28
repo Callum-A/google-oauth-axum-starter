@@ -1,10 +1,12 @@
+pub mod middleware;
 pub mod models;
 pub mod oauth;
 pub mod repositories;
 pub mod routers;
+pub mod services;
 pub mod state;
 
-use crate::{oauth::google::GoogleOAuthClient, state::app::AppState};
+use crate::{oauth::google::GoogleOAuthClient, services::jwt::JWTClient, state::app::AppState};
 use axum::{routing::get, Router};
 use dotenv::dotenv;
 use repositories::user::UserRepository;
@@ -29,20 +31,38 @@ async fn main() {
 
     // App state (pool.clone is cheap)
     let google_oauth_client = GoogleOAuthClient::from_env().unwrap();
+    let jwt_secret = std::env::var("JWT_SECRET").unwrap();
+    let jwt_client = JWTClient::new(&jwt_secret);
     let app_state = AppState {
         google_oauth_client,
+        jwt_client,
         user_repository: UserRepository::new(pool.clone()),
         pool,
     };
 
-    // Start server
-    let app = Router::new()
-        .route("/api/v1/health_check", get(routers::debug::health_check))
+    // Routes
+    let protected_routes = Router::new()
+        .route("/api/v1/whoami", get(routers::whoami::whoami))
+        .with_state(app_state.clone())
+        .layer(axum::middleware::from_fn_with_state(
+            app_state.clone(),
+            middleware::auth::authenticate,
+        ));
+
+    let unprotected_routes = Router::new()
         .route(
             "/api/v1/users/oauth/google",
             get(routers::oauth::google_oauth),
         )
-        .with_state(app_state);
+        .route("/api/v1/health_check", get(routers::debug::health_check))
+        .with_state(app_state.clone());
+
+    // Merge the two to give us our full app router
+    let app = Router::new()
+        .merge(unprotected_routes)
+        .merge(protected_routes);
+
+    // Start Server
     let listener = tokio::net::TcpListener::bind("127.0.0.1:5000")
         .await
         .unwrap();
