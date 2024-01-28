@@ -1,0 +1,7 @@
+services:
+  app:
+    env_file:
+      - .env
+    image: "rust-oauth:latest"
+    ports:
+      - "5000:5000"
