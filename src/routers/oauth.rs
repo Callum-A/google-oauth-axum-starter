@@ -3,19 +3,24 @@ use axum::{
     http::StatusCode,
     Json,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-use crate::{models::user::User, state::app::AppState};
+use crate::{models::user::User, services::jwt::JWTClaims, state::app::AppState};
 
 #[derive(Deserialize)]
 pub struct GoogleOAuth {
     code: String,
 }
 
+#[derive(Serialize)]
+pub struct OAuthResponse {
+    access_token: String,
+}
+
 pub async fn google_oauth(
     oauth: Query<GoogleOAuth>,
     State(state): State<AppState>,
-) -> (StatusCode, Json<Option<User>>) {
+) -> (StatusCode, Json<Option<OAuthResponse>>) {
     let details = state
         .google_oauth_client
         .perform_google_oauth(&oauth.code)
@@ -27,15 +32,27 @@ pub async fn google_oauth(
     }
 
     let details = details.unwrap();
-    let user = User::from(details);
-    let existing_user = state.user_repository.find_by_email(&user.email).await;
+    let google_user = User::from(details);
+    let opt_user = state
+        .user_repository
+        .find_by_email(&google_user.email)
+        .await;
 
-    if let Some(user) = existing_user {
-        tracing::info!("Event=ExistingUser user={:?}", user);
-        return (StatusCode::OK, Json(Some(user)));
-    }
+    let user = match opt_user {
+        Some(user) => user,
+        None => {
+            tracing::info!("Event=CreatedUser user={:?}", google_user);
+            state.user_repository.create_user(&google_user).await;
+            google_user
+        }
+    };
 
-    state.user_repository.create_user(&user).await;
-    tracing::info!("Event=CreatedUser user={:?}", user);
-    (StatusCode::OK, Json(Some(user)))
+    let token = state.jwt_client.encode(JWTClaims::from(&user));
+    tracing::info!("Event=AuthenticatingUser user={:?}", user);
+    (
+        StatusCode::OK,
+        Json(Some(OAuthResponse {
+            access_token: token,
+        })),
+    )
 }
